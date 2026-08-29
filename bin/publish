@@ -1,0 +1,107 @@
+#!/bin/sh
+#
+# 公開鍵をこのリポジトリのカタログ（keys/）へ登録する。
+#
+# 登録しただけではどのホストにも入らない。ホストへの許可は hosts/<label> への追記で別に行う。
+# 公開そのものは無害なので自動化し、認可だけを人手の commit として残すための分離。
+
+set -eu
+
+repo_root=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
+
+usage() {
+  cat >&2 <<'USAGE'
+usage: publish [-n name] [-P] [pubkey]
+
+  pubkey  登録する公開鍵（既定: ~/.ssh/id_ed25519.pub）
+  -n      カタログ上の名前（既定: ホスト名。用途別の鍵は <ホスト名>-<用途>）
+  -P      push せず commit だけで止める
+USAGE
+  exit 64
+}
+
+name=''
+push=yes
+
+while getopts 'n:Ph' opt; do
+  case "$opt" in
+    n) name=$OPTARG ;;
+    P) push=no ;;
+    *) usage ;;
+  esac
+done
+shift $((OPTIND - 1))
+[ $# -le 1 ] || usage
+
+pubkey=${1:-"$HOME/.ssh/id_ed25519.pub"}
+
+# 秘密鍵のパスを渡されたら対応する .pub に読み替える。鍵を指すとき秘密鍵の側の名前を
+# 書きたくなるので、そこで事故らないようにする。
+if [ -f "$pubkey.pub" ]; then
+  pubkey="$pubkey.pub"
+fi
+
+if [ ! -f "$pubkey" ]; then
+  echo "公開鍵がありません: $pubkey" >&2
+  exit 66
+fi
+
+# ssh-keygen -l は秘密鍵でも成功するので、公開鍵かどうかは形式で判定する。
+# public repo に秘密鍵を push する事故だけは絶対に通さない。
+if grep -q 'PRIVATE KEY' -- "$pubkey"; then
+  echo "秘密鍵に見えます。公開鍵（.pub）を指定してください: $pubkey" >&2
+  exit 65
+fi
+if ! grep -qE '^(ssh-(ed25519|rsa|dss)|ecdsa-sha2-[A-Za-z0-9-]+|sk-[A-Za-z0-9@.-]+) [A-Za-z0-9+/]' -- "$pubkey"; then
+  echo "公開鍵の形式ではありません: $pubkey" >&2
+  exit 65
+fi
+
+if [ -z "$name" ]; then
+  host=$(hostname 2>/dev/null || uname -n)
+  host=${host%%.*}
+  base=$(basename -- "$pubkey" .pub)
+  case "$base" in
+    id_ed25519) name=$host ;;
+    id_ed25519_*) name="$host-${base#id_ed25519_}" ;;
+    *) name="$host-$base" ;;
+  esac
+fi
+
+case "$name" in
+  '' | *[!A-Za-z0-9._-]*)
+    echo "名前に使えない文字があります: $name" >&2
+    exit 64
+    ;;
+esac
+
+dest="keys/$name.pub"
+mkdir -p "$repo_root/keys"
+
+if [ -f "$repo_root/$dest" ] && cmp -s -- "$pubkey" "$repo_root/$dest"; then
+  echo "登録済みです: $dest"
+  exit 0
+fi
+
+if [ -f "$repo_root/$dest" ]; then verb=update; else verb=add; fi
+
+cp -- "$pubkey" "$repo_root/$dest"
+chmod 644 "$repo_root/$dest"
+
+git -C "$repo_root" add -- "$dest"
+git -C "$repo_root" commit -q -m "$verb key $name" -- "$dest"
+echo "✅ ${verb}: $dest"
+
+if [ "$push" = yes ]; then
+  git -C "$repo_root" push -q
+  echo "✅ push しました"
+fi
+
+cat <<EOF
+
+この鍵はまだどのホストにも入らない。入れるには hosts/<label> に
+
+    $name
+
+を足して commit する。
+EOF

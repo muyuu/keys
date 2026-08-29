@@ -1,0 +1,96 @@
+#!/bin/bash
+# publish / apply を使い捨ての環境（/tmp/keystest）で検証する。実環境の ~/.ssh は触らない。
+set -u
+
+SRC=$(CDPATH="" cd -- "$(dirname -- "$0")/.." && pwd)
+T=/tmp/keystest
+rm -rf "$T"
+mkdir -p "$T/repo" "$T/home/.ssh"
+
+cp -r "$SRC/bin" "$T/repo/"
+chmod +x "$T/repo/bin/"*
+cd "$T/repo"
+git init -q
+git config user.email t@example.com
+git config user.name test
+mkdir -p keys hosts
+
+export HOME="$T/home"
+ssh-keygen -t ed25519 -N '' -C test@default -f "$HOME/.ssh/id_ed25519" -q
+ssh-keygen -t ed25519 -N '' -C test@work -f "$HOME/.ssh/id_ed25519_work" -q
+LABEL=$(hostname); LABEL=${LABEL%%.*}
+
+ok() { echo "  ✅ $1"; }
+ng() { echo "  ❌ $1"; FAIL=1; }
+FAIL=0
+
+echo "1. publish（既定鍵）"
+./bin/publish -P >/dev/null 2>&1 && [ -f "keys/$LABEL.pub" ] && ok "keys/$LABEL.pub ができた" || ng "既定鍵の publish"
+
+echo "2. publish（用途別の鍵は名前に用途が付く）"
+./bin/publish -P "$HOME/.ssh/id_ed25519_work.pub" >/dev/null 2>&1 \
+  && [ -f "keys/$LABEL-work.pub" ] && ok "keys/$LABEL-work.pub ができた" || ng "用途別鍵の publish"
+
+echo "3. publish は冪等"
+before=$(git rev-parse HEAD)
+./bin/publish -P >/dev/null 2>&1
+[ "$before" = "$(git rev-parse HEAD)" ] && ok "同じ鍵なら commit しない" || ng "冪等でない"
+
+echo "4. 秘密鍵のパスを渡すと .pub に読み替える"
+./bin/publish -P -n resolved "$HOME/.ssh/id_ed25519_work" >/dev/null 2>&1 \
+  && [ -f "keys/resolved.pub" ] \
+  && ! grep -q 'PRIVATE' keys/resolved.pub \
+  && ok "秘密鍵パスから .pub を拾った" || ng "読み替えできていない"
+
+echo "5. .pub の無い秘密鍵は拒否する"
+cp "$HOME/.ssh/id_ed25519" "$T/lonely"
+if ./bin/publish -P -n lonely "$T/lonely" >/dev/null 2>&1; then
+  ng "秘密鍵が通ってしまった"
+else
+  [ -f keys/lonely.pub ] && ng "秘密鍵が書き込まれた" || ok "秘密鍵を拒否した"
+fi
+
+echo "6. apply（管理ブロック外を保存する）"
+printf '%s\n' "$LABEL" >"hosts/$LABEL"
+printf '%s\n' '# 手で足した鍵' 'ssh-ed25519 AAAAmanual manual@host' >"$HOME/.ssh/authorized_keys"
+./bin/apply >/dev/null 2>&1
+grep -q 'AAAAmanual' "$HOME/.ssh/authorized_keys" && ok "手で足した行が残っている" || ng "ブロック外を消した"
+grep -q "$(awk '{print $2}' "keys/$LABEL.pub")" "$HOME/.ssh/authorized_keys" && ok "宣言した鍵が入った" || ng "鍵が入らない"
+[ "$(stat -c %a "$HOME/.ssh/authorized_keys")" = 600 ] && ok "パーミッションが 600" || ng "パーミッションが違う"
+
+echo "7. apply は冪等（ブロックが増殖しない）"
+./bin/apply >/dev/null 2>&1
+n=$(grep -c 'keys: managed block' "$HOME/.ssh/authorized_keys")
+[ "$n" -eq 2 ] && ok "マーカーは 2 行のまま" || ng "マーカーが $n 行に増えた"
+
+echo "8. 鍵を差し替えると管理ブロックから消える"
+printf '%s\n' "$LABEL-work" >"hosts/$LABEL"
+./bin/apply >/dev/null 2>&1
+grep -q "$(awk '{print $2}' "keys/$LABEL.pub")" "$HOME/.ssh/authorized_keys" && ng "外した鍵が残っている" || ok "外した鍵が消えた"
+grep -q "$(awk '{print $2}' "keys/$LABEL-work.pub")" "$HOME/.ssh/authorized_keys" && ok "新しい鍵が入った" || ng "新しい鍵が入らない"
+grep -q 'AAAAmanual' "$HOME/.ssh/authorized_keys" && ok "手で足した行はまだ残っている" || ng "ブロック外を消した"
+
+echo "9. 鍵が 0 本なら中断する"
+: >"hosts/$LABEL"
+if ./bin/apply >/dev/null 2>&1; then
+  ng "0 本でも書き込んでしまった"
+else
+  grep -q 'AAAAmanual' "$HOME/.ssh/authorized_keys" && ok "中断して既存を壊さなかった" || ng "中断したがファイルが壊れた"
+fi
+
+echo "10. カタログに無い鍵名は失敗する"
+printf '%s\n' 'nonexistent' >"hosts/$LABEL"
+if ./bin/apply >/dev/null 2>&1; then ng "存在しない鍵名が通った"; else ok "存在しない鍵名を弾いた"; fi
+
+echo "11. dry-run は書き込まない"
+printf '%s\n' "$LABEL" >"hosts/$LABEL"
+sum_before=$(md5sum <"$HOME/.ssh/authorized_keys")
+./bin/apply -n >/dev/null 2>&1
+[ "$sum_before" = "$(md5sum <"$HOME/.ssh/authorized_keys")" ] && ok "dry-run でファイルが変わらない" || ng "dry-run で書き込んだ"
+
+echo "12. 許可リストが無いホストは失敗する"
+if ./bin/apply unknown-host >/dev/null 2>&1; then ng "リスト無しで通った"; else ok "リスト無しを弾いた"; fi
+
+echo
+[ "$FAIL" -eq 0 ] && echo "=== 全項目 PASS ===" || echo "=== 失敗あり ==="
+exit "$FAIL"

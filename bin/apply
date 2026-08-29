@@ -1,0 +1,104 @@
+#!/bin/sh
+#
+# hosts/<label> に列挙された鍵を authorized_keys へ反映する。
+#
+# 管理ブロックの外は読み書きしない。このリポジトリの管理外で手で足した鍵を巻き込まないため。
+# 適用後に鍵が 1 本も残らない場合は書き込まない（締め出しの事故が一番痛いので）。
+
+set -eu
+
+repo_root=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
+
+begin_mark='# >>> keys: managed block >>>'
+end_mark='# <<< keys: managed block <<<'
+
+usage() {
+  cat >&2 <<'USAGE'
+usage: apply [-f authorized_keys] [-n] [label]
+
+  label   許可リスト hosts/<label>（既定: ホスト名）
+  -f      書き込み先（既定: ~/.ssh/authorized_keys）
+  -n      dry-run。書き込まず、反映後の内容を表示する
+USAGE
+  exit 64
+}
+
+auth="$HOME/.ssh/authorized_keys"
+dry=no
+
+while getopts 'f:nh' opt; do
+  case "$opt" in
+    f) auth=$OPTARG ;;
+    n) dry=yes ;;
+    *) usage ;;
+  esac
+done
+shift $((OPTIND - 1))
+[ $# -le 1 ] || usage
+
+label=${1:-}
+if [ -z "$label" ]; then
+  label=$(hostname 2>/dev/null || uname -n)
+  label=${label%%.*}
+fi
+
+list="$repo_root/hosts/$label"
+if [ ! -f "$list" ]; then
+  echo "許可リストがありません: hosts/$label" >&2
+  echo "このホストに入れる鍵の名前を 1 行ずつ書いて commit する。" >&2
+  exit 66
+fi
+
+block=$(mktemp)
+staged="$auth.keys.$$"
+trap 'rm -f "$block" "$staged"' EXIT HUP INT TERM
+
+count=0
+printf '%s\n' "$begin_mark" >"$block"
+
+while IFS= read -r line || [ -n "$line" ]; do
+  case "$line" in
+    '' | '#'*) continue ;;
+  esac
+  name=$(printf '%s' "$line" | tr -d '[:space:]')
+  [ -n "$name" ] || continue
+
+  key="$repo_root/keys/$name.pub"
+  if [ ! -f "$key" ]; then
+    echo "カタログに鍵がありません: keys/$name.pub" >&2
+    exit 66
+  fi
+  cat -- "$key" >>"$block"
+  count=$((count + 1))
+done <"$list"
+
+printf '%s\n' "$end_mark" >>"$block"
+
+if [ "$count" -eq 0 ]; then
+  echo "hosts/$label に鍵が 1 本もない。締め出しを避けるため中断する。" >&2
+  exit 65
+fi
+
+mkdir -p -- "$(dirname -- "$auth")"
+
+# 既存の管理ブロックだけを差し替える。ブロック外の行はそのまま残す。
+if [ -f "$auth" ]; then
+  awk -v b="$begin_mark" -v e="$end_mark" '
+    $0 == b { skip = 1; next }
+    $0 == e { skip = 0; next }
+    !skip   { print }
+  ' "$auth" >"$staged"
+else
+  : >"$staged"
+fi
+cat "$block" >>"$staged"
+
+if [ "$dry" = no ]; then
+  chmod 700 -- "$(dirname -- "$auth")" 2>/dev/null || true
+  chmod 600 "$staged"
+  mv -- "$staged" "$auth"
+  echo "✅ $auth を更新した（$label: $count 本）"
+else
+  echo "--- dry-run: $auth（$label: $count 本）---"
+  cat "$staged"
+fi
