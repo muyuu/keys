@@ -54,8 +54,8 @@ laptop-work
 
 ```sh
 git pull
-bin/apply -n        # dry-run。何が書かれるか確認する
-bin/apply           # ~/.ssh/authorized_keys の管理ブロックを更新
+bin/apply --dry-run   # 何が書かれるか確認する
+bin/apply             # ~/.ssh/authorized_keys の管理ブロックを更新
 ```
 
 ラベルは既定でホスト名。違うなら `bin/apply vps1` のように渡す。

@@ -11,11 +11,11 @@ repo_root=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
 
 usage() {
   cat >&2 <<'USAGE'
-usage: publish [-n name] [-P] [pubkey]
+usage: publish [-n name] [--no-push] [pubkey]
 
-  pubkey  登録する公開鍵（既定: ~/.ssh/id_ed25519.pub）
-  -n      カタログ上の名前（既定: ホスト名。用途別の鍵は <ホスト名>-<用途>）
-  -P      push せず commit だけで止める
+  pubkey          登録する公開鍵（既定: ~/.ssh/id_ed25519.pub）
+  -n, --name      カタログ上の名前（既定: ホスト名。用途別の鍵は <ホスト名>-<用途>）
+  -P, --no-push   push せず commit だけで止める
 USAGE
   exit 64
 }
@@ -27,13 +27,13 @@ pubkey=''
 # オプションは鍵の指定より後ろにも書ける。手で叩くコマンドなので並び順で失敗させない。
 while [ $# -gt 0 ]; do
   case "$1" in
-    -n)
+    -n | --name)
       shift
       [ $# -gt 0 ] || usage
       name=$1
       ;;
-    -P) push=no ;;
-    -h) usage ;;
+    -P | --no-push) push=no ;;
+    -h | --help) usage ;;
     -*)
       echo "不明なオプション: $1" >&2
       usage

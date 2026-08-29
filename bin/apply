@@ -14,11 +14,11 @@ end_mark='# <<< keys: managed block <<<'
 
 usage() {
   cat >&2 <<'USAGE'
-usage: apply [-f authorized_keys] [-n] [label]
+usage: apply [-f authorized_keys] [--dry-run] [label]
 
-  label   許可リスト hosts/<label>（既定: ホスト名）
-  -f      書き込み先（既定: ~/.ssh/authorized_keys）
-  -n      dry-run。書き込まず、反映後の内容を表示する
+  label        許可リスト hosts/<label>（既定: ホスト名）
+  -f, --file   書き込み先（既定: ~/.ssh/authorized_keys）
+  --dry-run    書き込まず、反映後の内容を表示する
 USAGE
   exit 64
 }
@@ -30,13 +30,13 @@ label=''
 # オプションはラベルより後ろにも書ける。手で叩くコマンドなので並び順で失敗させない。
 while [ $# -gt 0 ]; do
   case "$1" in
-    -f)
+    -f | --file)
       shift
       [ $# -gt 0 ] || usage
       auth=$1
       ;;
-    -n) dry=yes ;;
-    -h) usage ;;
+    --dry-run) dry=yes ;;
+    -h | --help) usage ;;
     -*)
       echo "不明なオプション: $1" >&2
       usage

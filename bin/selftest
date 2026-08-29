@@ -85,7 +85,7 @@ if ./bin/apply >/dev/null 2>&1; then ng "存在しない鍵名が通った"; els
 echo "11. dry-run は書き込まない"
 printf '%s\n' "$LABEL" >"hosts/$LABEL"
 sum_before=$(md5sum <"$HOME/.ssh/authorized_keys")
-./bin/apply -n >/dev/null 2>&1
+./bin/apply --dry-run >/dev/null 2>&1
 [ "$sum_before" = "$(md5sum <"$HOME/.ssh/authorized_keys")" ] && ok "dry-run でファイルが変わらない" || ng "dry-run で書き込んだ"
 
 echo "12. 許可リストが無いホストは失敗する"
@@ -95,13 +95,21 @@ echo "13. オプションは位置引数の後ろでも効く"
 ./bin/publish "$HOME/.ssh/id_ed25519.pub" -n trailing-opt -P >/dev/null 2>&1 \
   && [ -f keys/trailing-opt.pub ] && ok "publish で後置オプションが効く" || ng "publish で後置オプションが効かない"
 sum_before=$(md5sum <"$HOME/.ssh/authorized_keys")
-./bin/apply "$LABEL" -n >/dev/null 2>&1 \
+./bin/apply "$LABEL" --dry-run >/dev/null 2>&1 \
   && [ "$sum_before" = "$(md5sum <"$HOME/.ssh/authorized_keys")" ] \
   && ok "apply で後置オプションが効く" || ng "apply で後置オプションが効かない"
 
 echo "14. 不明なオプションは弾く"
 if ./bin/publish -Z >/dev/null 2>&1; then ng "不明オプションが通った"; else ok "不明オプションを弾いた"; fi
 if ./bin/apply -Z >/dev/null 2>&1; then ng "不明オプションが通った"; else ok "不明オプションを弾いた"; fi
+
+echo "15. apply の -n は dry-run ではなくエラー（publish の -n と取り違えても書き込まない）"
+sum_before=$(md5sum <"$HOME/.ssh/authorized_keys")
+if ./bin/apply -n >/dev/null 2>&1; then
+  ng "-n が通ってしまった"
+else
+  [ "$sum_before" = "$(md5sum <"$HOME/.ssh/authorized_keys")" ] && ok "止まって書き込まなかった" || ng "書き込んでしまった"
+fi
 
 echo
 [ "$FAIL" -eq 0 ] && echo "=== 全項目 PASS ===" || echo "=== 失敗あり ==="
