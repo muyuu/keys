@@ -25,18 +25,30 @@ USAGE
 
 auth="$HOME/.ssh/authorized_keys"
 dry=no
+label=''
 
-while getopts 'f:nh' opt; do
-  case "$opt" in
-    f) auth=$OPTARG ;;
-    n) dry=yes ;;
-    *) usage ;;
+# オプションはラベルより後ろにも書ける。手で叩くコマンドなので並び順で失敗させない。
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -f)
+      shift
+      [ $# -gt 0 ] || usage
+      auth=$1
+      ;;
+    -n) dry=yes ;;
+    -h) usage ;;
+    -*)
+      echo "不明なオプション: $1" >&2
+      usage
+      ;;
+    *)
+      [ -z "$label" ] || usage
+      label=$1
+      ;;
   esac
+  shift
 done
-shift $((OPTIND - 1))
-[ $# -le 1 ] || usage
 
-label=${1:-}
 if [ -z "$label" ]; then
   label=$(hostname 2>/dev/null || uname -n)
   label=${label%%.*}

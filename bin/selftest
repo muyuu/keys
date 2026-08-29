@@ -91,6 +91,18 @@ sum_before=$(md5sum <"$HOME/.ssh/authorized_keys")
 echo "12. 許可リストが無いホストは失敗する"
 if ./bin/apply unknown-host >/dev/null 2>&1; then ng "リスト無しで通った"; else ok "リスト無しを弾いた"; fi
 
+echo "13. オプションは位置引数の後ろでも効く"
+./bin/publish "$HOME/.ssh/id_ed25519.pub" -n trailing-opt -P >/dev/null 2>&1 \
+  && [ -f keys/trailing-opt.pub ] && ok "publish で後置オプションが効く" || ng "publish で後置オプションが効かない"
+sum_before=$(md5sum <"$HOME/.ssh/authorized_keys")
+./bin/apply "$LABEL" -n >/dev/null 2>&1 \
+  && [ "$sum_before" = "$(md5sum <"$HOME/.ssh/authorized_keys")" ] \
+  && ok "apply で後置オプションが効く" || ng "apply で後置オプションが効かない"
+
+echo "14. 不明なオプションは弾く"
+if ./bin/publish -Z >/dev/null 2>&1; then ng "不明オプションが通った"; else ok "不明オプションを弾いた"; fi
+if ./bin/apply -Z >/dev/null 2>&1; then ng "不明オプションが通った"; else ok "不明オプションを弾いた"; fi
+
 echo
 [ "$FAIL" -eq 0 ] && echo "=== 全項目 PASS ===" || echo "=== 失敗あり ==="
 exit "$FAIL"

@@ -22,18 +22,31 @@ USAGE
 
 name=''
 push=yes
+pubkey=''
 
-while getopts 'n:Ph' opt; do
-  case "$opt" in
-    n) name=$OPTARG ;;
-    P) push=no ;;
-    *) usage ;;
+# オプションは鍵の指定より後ろにも書ける。手で叩くコマンドなので並び順で失敗させない。
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -n)
+      shift
+      [ $# -gt 0 ] || usage
+      name=$1
+      ;;
+    -P) push=no ;;
+    -h) usage ;;
+    -*)
+      echo "不明なオプション: $1" >&2
+      usage
+      ;;
+    *)
+      [ -z "$pubkey" ] || usage
+      pubkey=$1
+      ;;
   esac
+  shift
 done
-shift $((OPTIND - 1))
-[ $# -le 1 ] || usage
 
-pubkey=${1:-"$HOME/.ssh/id_ed25519.pub"}
+[ -n "$pubkey" ] || pubkey="$HOME/.ssh/id_ed25519.pub"
 
 # 秘密鍵のパスを渡されたら対応する .pub に読み替える。鍵を指すとき秘密鍵の側の名前を
 # 書きたくなるので、そこで事故らないようにする。
